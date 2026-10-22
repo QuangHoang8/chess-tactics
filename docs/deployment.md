@@ -39,13 +39,12 @@ pnpm --filter @chess-tactics/api start:dev
 pnpm --filter @chess-tactics/web dev
 ```
 
-**Known limitation as of Phase 0:** Docker was not available in the environment that scaffolded this
-project, so `prisma/migrations/20261022000000_init/migration.sql` was generated with
-`prisma migrate diff --from-empty --to-schema-datamodel` (proves the schema compiles to valid,
-reviewed Postgres DDL) rather than applied with `prisma migrate dev` against a live database. The
-schema itself was confirmed valid with `prisma validate`. **The first person with Docker (or any
-reachable Postgres 16 instance) should run `pnpm db:migrate` once** to confirm the migration applies
-cleanly end-to-end — this has not yet been verified against a real database.
+**Resolved during Phase 1.** Docker still isn't available in the environment doing this work, but
+the owner supplied real Neon (AWS ap-southeast-1) credentials, so `prisma/migrations/20261022000000_init`
+was applied for real with `pnpm db:deploy` (`prisma migrate deploy`) against that database, and the
+full Phase 1 login → solve → persist flow was verified against it end-to-end (see
+`docs/implementation-plan.md` §5 Phase 1's "Verifiable" line). `docker-compose.yml` remains for
+anyone who prefers a local Postgres instead of pointing `DATABASE_URL` at the shared Neon project.
 
 ## Environment variables
 
