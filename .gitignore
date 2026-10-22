@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Prisma
+prisma/generated/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Test / coverage
+coverage/
+.vitest-cache/
+
+# Archon run artifacts (never belong in the repo)
+.archon/typed-artifacts/

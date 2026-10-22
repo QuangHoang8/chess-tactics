@@ -1,0 +1,224 @@
+// Chess Tactics Trainer data model.
+// Transcribed from docs/implementation-plan.md §4, with the owner's §12 overrides applied:
+// UserSettings.reviewsPerDay is nullable (null = unlimited), newPerDay defaults to 20,
+// dayRolloverHour defaults to 0 (midnight).
+//
+// Phase 0 scope: schema only. No application code reads or writes through this yet —
+// that starts in Phase 1 (plan §5).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Actor {
+  SOLVER
+  OPPONENT
+}
+
+enum CardState {
+  NEW
+  LEARNING
+  REVIEW
+  RELEARNING
+}
+
+enum Rating {
+  AGAIN
+  HARD
+  GOOD
+  EASY
+}
+
+enum ImportKind {
+  JSON
+  CSV
+  PGN
+}
+
+enum ImportStatus {
+  PENDING
+  PREVIEWED
+  COMMITTED
+  FAILED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+
+  settings         UserSettings?
+  puzzles          Puzzle[]
+  puzzleCards      PuzzleCard[]
+  reviewLogs       ReviewLog[]
+  importBatches    ImportBatch[]
+  trainingSessions TrainingSession[]
+}
+
+/// Per-user settings. §12 (owner, 2026-10-22): reviewsPerDay unlimited, newPerDay=20, rollover=midnight.
+model UserSettings {
+  userId String @id
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  timezone        String @default("UTC")
+  /// 0-23. 0 = midnight (owner decision, plan §3.8/§12).
+  dayRolloverHour Int    @default(0)
+  /// Owner override of the original request's stated default of 10 (plan §12).
+  newPerDay       Int    @default(20)
+  /// null = unlimited (owner decision, plan §12). A future numeric value re-imposes a cap
+  /// with no migration needed.
+  reviewsPerDay   Int?
+
+  updatedAt DateTime @updatedAt
+}
+
+/// A tactical puzzle: starting FEN plus metadata. The solution itself lives in PuzzleMove.
+model Puzzle {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  fen         String
+  /// 'w' | 'b' — chess.js's own convention (plan §3.4: recorded from `turn()`).
+  sideToMove  String
+  /// 1-5. Range enforced at the application boundary (packages/contracts), not here.
+  difficulty  Int
+  source      String?
+  explanation String?
+  themes      String[]
+  tags        String[]
+
+  /// SHA-256 of the normalised FEN alone (plan §4 — deliberately excludes the solution line).
+  dedupeHash String
+
+  importBatchId String?
+  importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  moves      PuzzleMove[]
+  card       PuzzleCard?
+  reviewLogs ReviewLog[]
+
+  @@unique([userId, dedupeHash])
+  @@index([userId, createdAt])
+  @@index([userId, difficulty])
+}
+
+/// Self-referencing solution tree (plan §3.3). Sibling SOLVER nodes under one parent are the
+/// explicitly accepted alternatives at that ply; sibling OPPONENT nodes are the replies the
+/// puzzle handles.
+model PuzzleMove {
+  id       String  @id @default(cuid())
+  puzzleId String
+  puzzle   Puzzle  @relation(fields: [puzzleId], references: [id], onDelete: Cascade)
+
+  parentId String?
+  parent   PuzzleMove?  @relation("PuzzleMoveTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children PuzzleMove[] @relation("PuzzleMoveTree")
+
+  ply       Int
+  /// chess.js-normalised SAN (plan §3.2).
+  san       String
+  actor     Actor
+  isPrimary Boolean
+  comment   String?
+
+  @@index([puzzleId, parentId])
+}
+
+/// SM-2 scheduling state for one puzzle, one user (plan §3.5).
+model PuzzleCard {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  puzzleId String @unique
+  puzzle   Puzzle @relation(fields: [puzzleId], references: [id], onDelete: Cascade)
+
+  state          CardState @default(NEW)
+  dueAt          DateTime
+  intervalDays   Float     @default(0)
+  easeFactor     Float     @default(2.5)
+  repetitions    Int       @default(0)
+  lapses         Int       @default(0)
+  learningStep   Int       @default(0)
+  lastReviewedAt DateTime?
+
+  reviewLogs ReviewLog[]
+
+  @@index([userId, dueAt])
+}
+
+/// One review event. Columns are exactly FSRS's optimiser inputs (plan §3.5), so a future
+/// migration off SM-2 needs no backfill.
+model ReviewLog {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  puzzleId String
+  puzzle   Puzzle @relation(fields: [puzzleId], references: [id], onDelete: Cascade)
+
+  cardId String
+  card   PuzzleCard @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  rating      Rating
+  correct     Boolean
+  hintsUsed   Int
+  durationMs  Int
+  reviewedAt  DateTime
+  elapsedDays Float
+  scheduledDays Float
+
+  intervalBefore Float
+  easeBefore     Float
+  repsBefore     Int
+  lapsesBefore   Int
+  stateBefore    CardState
+
+  @@index([userId, reviewedAt])
+  @@index([cardId, reviewedAt])
+}
+
+/// One import attempt (JSON/CSV/PGN). idempotencyKey makes retries safe (plan §3.5/§4).
+model ImportBatch {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  kind           ImportKind
+  status         ImportStatus
+  idempotencyKey String
+  sourceName     String?
+  totalRows      Int
+  acceptedRows   Int
+  rejectedRows   Int
+  /// Per-record report: ImportRecord[] (plan §4.5), stored as JSON.
+  report         Json
+  createdAt      DateTime @default(now())
+
+  puzzles Puzzle[]
+
+  @@unique([userId, idempotencyKey])
+}
+
+/// Enables resume-after-refresh (plan §3, functional requirement 3).
+model TrainingSession {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  startedAt       DateTime  @default(now())
+  endedAt         DateTime?
+  newServed       Int       @default(0)
+  reviewsServed   Int       @default(0)
+  currentPuzzleId String?
+}

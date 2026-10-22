@@ -1,0 +1,24 @@
+{
+  "name": "@chess-tactics/api",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "start:dev": "nest start --watch",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.0.1",
+    "@nestjs/core": "^11.0.1",
+    "@nestjs/platform-express": "^11.0.1",
+    "@prisma/client": "^6.2.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^11.0.0",
+    "@types/node": "^22.10.7",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}
