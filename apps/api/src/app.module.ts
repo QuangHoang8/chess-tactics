@@ -6,10 +6,17 @@ import { AppService } from "./app.service";
 import { AuthModule } from "./auth/auth.module";
 import { JwtAuthGuard } from "./auth/jwt-auth.guard";
 import { PrismaModule } from "./prisma/prisma.module";
+import { PuzzlesModule } from "./puzzles/puzzles.module";
 import { TrainingModule } from "./training/training.module";
 
 @Module({
-  imports: [ConfigModule.forRoot({ isGlobal: true }), PrismaModule, AuthModule, TrainingModule],
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    PrismaModule,
+    AuthModule,
+    TrainingModule,
+    PuzzlesModule,
+  ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: JwtAuthGuard }],
 })

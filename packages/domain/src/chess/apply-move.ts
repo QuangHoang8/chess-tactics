@@ -1,5 +1,11 @@
-import { Chess, validateFen } from "chess.js";
+import { Chess, validateFen as chessJsValidateFen } from "chess.js";
 import type { ApplyMoveResult, ApplySanResult, MoveInput } from "./types";
+
+/** Re-exports chess.js's FEN validator so callers (apps/web's position editor included) don't
+ * need chess.js as a second direct dependency, pinned separately from this package's own. */
+export function validateFen(fen: string): { ok: boolean; error?: string } {
+  return chessJsValidateFen(fen);
+}
 
 /**
  * Converts board input {from,to,promotion?} to normalised SAN (plan §3.2/§4.5 wire-vs-storage

@@ -1,7 +1,13 @@
 import { createHash } from "node:crypto";
 import { hash } from "@node-rs/argon2";
 import { PrismaClient } from "@prisma/client";
-import { validateSolution, type Actor, type SolutionTreeInput, type ValidatedTreeNode } from "@chess-tactics/domain";
+import {
+  dedupeKeyOf,
+  validateSolution,
+  type Actor,
+  type SolutionTreeInput,
+  type ValidatedTreeNode,
+} from "@chess-tactics/domain";
 
 const prisma = new PrismaClient();
 
@@ -103,8 +109,7 @@ function buildTree(lines: SeedLine[], depth: number): SolutionTreeInput[] {
 
 /** Plan §4: dedupeHash is SHA-256 of the normalised FEN alone (board/turn/castling/en-passant, no clocks). */
 function dedupeHashOf(fen: string): string {
-  const normalised = fen.trim().split(/\s+/).slice(0, 4).join(" ");
-  return createHash("sha256").update(normalised).digest("hex");
+  return createHash("sha256").update(dedupeKeyOf(fen)).digest("hex");
 }
 
 async function createMoveTree(
