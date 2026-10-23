@@ -173,14 +173,13 @@ export class ImportsService {
 
     const skipped = records.length - created;
     const committed: StoredReport = { ...stored, records, commit: { created, skipped } };
+    // `acceptedRows`/`rejectedRows` keep describing what the *file* held and are left alone; what
+    // the *commit* did lives in `report.commit`. Overwriting them would make the same two columns
+    // mean different things either side of a commit, and make a replayed batch disagree with the
+    // report the user approved.
     const updated = await this.prisma.importBatch.update({
       where: { id: batch.id },
-      data: {
-        status: "COMMITTED",
-        acceptedRows: created,
-        rejectedRows: skipped,
-        report: toJsonColumn(committed),
-      },
+      data: { status: "COMMITTED", report: toJsonColumn(committed) },
     });
 
     return { batchId: updated.id, status: "COMMITTED", created, skipped };

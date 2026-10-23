@@ -353,7 +353,8 @@ describe("idempotency", () => {
     await commit(preview.batchId);
 
     const replay = await upload({ kind: "JSON", body: JSON.stringify([jsonPuzzle()]) });
-    expect(replay.body.status).toBe("COMMITTED");
+    // Only `status` moves on: the counts and records still describe the file the user approved.
+    expect(replay.body).toEqual({ ...preview, status: "COMMITTED" });
     expect(prisma.puzzles).toHaveLength(1);
   });
 

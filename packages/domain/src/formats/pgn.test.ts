@@ -63,6 +63,22 @@ describe("stripNagsAfterComments", () => {
     expect(text).toBe("1. e4 {x} e5 *");
   });
 
+  it("removes a NAG the exporter wrapped onto the next line", () => {
+    // Exported PGN wraps movetext at ~80 columns, which lands between `}` and `$1` often enough
+    // that a spaces-and-tabs-only gap would leave real files unparseable.
+    const pgn = `[Event "W"]\n\n1. e4 {a long enough comment that the line wraps right here}\n$1 e5 *`;
+    expect(() => new Chess().loadPgn(pgn)).toThrow();
+
+    const { text, strippedNags } = stripNagsAfterComments(pgn);
+    expect(strippedNags).toBe(1);
+    expect(() => new Chess().loadPgn(text)).not.toThrow();
+  });
+
+  it("does not reach across an intervening move to a later NAG", () => {
+    const pgn = "1. e4 {c}\n\n2. Nf3 $1 Nc6 *";
+    expect(stripNagsAfterComments(pgn)).toEqual({ text: pgn, strippedNags: 0 });
+  });
+
   it("leaves NAGs that do not follow a comment alone -- those already parse", () => {
     const pgn = `[Event "N"]\n\n1. e4 $1 e5 2. Nf3 $2 {develops} Nc6 *`;
     const { text, strippedNags } = stripNagsAfterComments(pgn);

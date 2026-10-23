@@ -33,10 +33,14 @@ export function splitPgnGames(text: string): string[] {
  * Stripping rather than reordering: a run of NAGs after one comment (`{x} $1 $2`) and nested
  * braces both make reordering a parser's job, while stripping is one pass and idempotent. NAGs
  * are not part of the §4 data model, so nothing persisted is lost -- but the count is reported.
+ *
+ * The gap spans `\s`, not just spaces and tabs: exported PGN wraps movetext at around 80 columns
+ * and the wrap lands between `}` and `$1` often enough to matter. Anything else between them --
+ * a move, a move number -- is non-whitespace, so this cannot reach across to a later move's NAG.
  */
 export function stripNagsAfterComments(text: string): { text: string; strippedNags: number } {
   let strippedNags = 0;
-  const stripped = text.replace(/\}(?:[ \t]*\$\d+)+/g, (match) => {
+  const stripped = text.replace(/\}(?:\s*\$\d+)+/g, (match) => {
     strippedNags += (match.match(/\$\d+/g) ?? []).length;
     return "}";
   });

@@ -217,8 +217,11 @@ Each record in the report is:
 Two independent mechanisms, per plan §3.5:
 
 - **`Idempotency-Key`** covers *re-sending the same batch*. Replaying a key you have already used
-  returns the original batch and its original report, unchanged — the file is not re-processed, and
-  an already-committed batch is not committed twice.
+  returns the original batch and its original report — the file is not re-processed (the body you
+  send the second time is not even read), and an already-committed batch is not committed twice.
+  `totalRows`/`acceptedRows`/`rejectedRows` keep describing the file as previewed; only `status`
+  changes once committed, and only a record whose position was created in between flips to
+  `DUPLICATE`.
 - **`dedupeHash`** — SHA-256 of the FEN with the halfmove and fullmove counters dropped, unique per
   user — covers *the same position arriving from a different batch or source*. That is what turns a
   second upload of the same collection into a report full of `DUPLICATE` and zero new rows.
