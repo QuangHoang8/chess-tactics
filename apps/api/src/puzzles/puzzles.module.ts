@@ -1,9 +1,10 @@
 import { Module } from "@nestjs/common";
 import { PuzzlesController } from "./puzzles.controller";
+import { PuzzlesExportService } from "./puzzles-export.service";
 import { PuzzlesService } from "./puzzles.service";
 
 @Module({
   controllers: [PuzzlesController],
-  providers: [PuzzlesService],
+  providers: [PuzzlesService, PuzzlesExportService],
 })
 export class PuzzlesModule {}

@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import {
   ConflictException,
   Injectable,
@@ -6,7 +5,7 @@ import {
   UnprocessableEntityException,
 } from "@nestjs/common";
 import { Prisma, type CardState, type Puzzle } from "@prisma/client";
-import { dedupeKeyOf, validateSolution, type ValidatedTreeNode } from "@chess-tactics/domain";
+import { validateSolution } from "@chess-tactics/domain";
 import type {
   CreatePuzzleRequest,
   CreatePuzzleResponse,
@@ -18,9 +17,8 @@ import type {
   UpdatePuzzleResponse,
 } from "@chess-tactics/contracts";
 import { PrismaService } from "../prisma/prisma.service";
+import { createMoveTree, dedupeHashOf, insertPuzzle } from "./puzzle-persistence";
 import { rowsToPuzzleMoveNodes, rowsToSolutionTreeInput, toSolutionTreeInput } from "./puzzle-tree";
-
-type Tx = Prisma.TransactionClient;
 
 @Injectable()
 export class PuzzlesService {
@@ -32,35 +30,22 @@ export class PuzzlesService {
       throw unprocessable(result.errors);
     }
 
-    const dedupeHash = dedupeHashOf(request.fen);
-
     try {
-      const puzzle = await this.prisma.$transaction(async (tx) => {
-        const created = await tx.puzzle.create({
-          data: {
-            userId,
-            fen: request.fen,
-            sideToMove: result.sideToMove,
-            difficulty: request.difficulty,
-            themes: request.themes,
-            tags: request.tags,
-            dedupeHash,
-            ...(request.source !== undefined ? { source: request.source } : {}),
-            ...(request.explanation !== undefined ? { explanation: request.explanation } : {}),
-          },
-        });
+      const id = await this.prisma.$transaction((tx) =>
+        insertPuzzle(tx, {
+          userId,
+          fen: request.fen,
+          sideToMove: result.sideToMove,
+          difficulty: request.difficulty,
+          themes: request.themes,
+          tags: request.tags,
+          source: request.source,
+          explanation: request.explanation,
+          tree: result.tree,
+        }),
+      );
 
-        await createMoveTree(tx, created.id, null, result.tree, 1);
-
-        // Plan §2.4 / §8: the card is created in the same transaction, in state NEW -- the
-        // training queue (Phase 4) serves NEW cards, and a puzzle with no card would be invisible
-        // to it two phases later.
-        await tx.puzzleCard.create({ data: { userId, puzzleId: created.id, dueAt: new Date() } });
-
-        return created;
-      });
-
-      return { id: puzzle.id, coverageWarnings: result.warnings };
+      return { id, coverageWarnings: result.warnings };
     } catch (error) {
       rethrowAsConflict(error);
     }
@@ -211,38 +196,6 @@ function toSummary(
       ? { card: { state: puzzle.card.state, dueAt: puzzle.card.dueAt.toISOString() } }
       : {}),
   };
-}
-
-/** Mirrors prisma/seed.ts's hashing -- both hash dedupeKeyOf's output the same way, so seed data
- * and API-created puzzles can never silently disagree on what counts as a duplicate. */
-function dedupeHashOf(fen: string): string {
-  return createHash("sha256").update(dedupeKeyOf(fen)).digest("hex");
-}
-
-/** Takes `tx` explicitly rather than closing over a module-level client (unlike the standalone
- * seed script) -- otherwise the tree writes would land outside the transaction and the "card
- * created atomically with its puzzle" guarantee (plan §2.4) would be false. */
-async function createMoveTree(
-  tx: Tx,
-  puzzleId: string,
-  parentId: string | null,
-  nodes: ValidatedTreeNode[],
-  ply: number,
-): Promise<void> {
-  for (const node of nodes) {
-    const created = await tx.puzzleMove.create({
-      data: {
-        puzzleId,
-        parentId,
-        ply,
-        san: node.san,
-        actor: node.actor,
-        isPrimary: node.isPrimary,
-        ...(node.comment !== undefined ? { comment: node.comment } : {}),
-      },
-    });
-    await createMoveTree(tx, puzzleId, created.id, node.children, ply + 1);
-  }
 }
 
 function unprocessable(errors: { ply: number; input: string; message: string }[]): UnprocessableEntityException {

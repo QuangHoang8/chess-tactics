@@ -5,6 +5,7 @@ import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
 import { AuthModule } from "./auth/auth.module";
 import { JwtAuthGuard } from "./auth/jwt-auth.guard";
+import { ImportsModule } from "./imports/imports.module";
 import { PrismaModule } from "./prisma/prisma.module";
 import { PuzzlesModule } from "./puzzles/puzzles.module";
 import { TrainingModule } from "./training/training.module";
@@ -16,6 +17,7 @@ import { TrainingModule } from "./training/training.module";
     AuthModule,
     TrainingModule,
     PuzzlesModule,
+    ImportsModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: JwtAuthGuard }],

@@ -3,3 +3,4 @@ export * from "./schemas/error";
 export * from "./schemas/auth";
 export * from "./schemas/training";
 export * from "./schemas/puzzle";
+export * from "./schemas/import";

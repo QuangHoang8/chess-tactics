@@ -1,6 +1,19 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Patch,
+  Post,
+  Query,
+  StreamableFile,
+} from "@nestjs/common";
 import {
   CreatePuzzleRequestDto,
+  ExportPuzzlesQueryDto,
   ListPuzzlesQueryDto,
   UpdatePuzzleRequestDto,
   type CreatePuzzleResponse,
@@ -10,11 +23,15 @@ import {
 } from "@chess-tactics/contracts";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { AuthenticatedUser } from "../auth/jwt.strategy";
+import { PuzzlesExportService } from "./puzzles-export.service";
 import { PuzzlesService } from "./puzzles.service";
 
 @Controller("puzzles")
 export class PuzzlesController {
-  constructor(private readonly puzzlesService: PuzzlesService) {}
+  constructor(
+    private readonly puzzlesService: PuzzlesService,
+    private readonly exportService: PuzzlesExportService,
+  ) {}
 
   @Post()
   create(
@@ -30,6 +47,15 @@ export class PuzzlesController {
     @Query() query: ListPuzzlesQueryDto,
   ): Promise<ListPuzzlesResponse> {
     return this.puzzlesService.findMany(user.userId, query);
+  }
+
+  // Declared before `:id`, which would otherwise match "export" first.
+  @Get("export")
+  exportAll(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: ExportPuzzlesQueryDto,
+  ): StreamableFile {
+    return this.exportService.export(user.userId, query);
   }
 
   @Get(":id")
