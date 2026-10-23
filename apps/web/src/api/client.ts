@@ -1,9 +1,14 @@
 import type {
+  CommitImportResponse,
   CreatePuzzleRequest,
   CreatePuzzleResponse,
+  ExportPuzzlesQuery,
+  ImportBatchResponse,
+  ImportKindValue,
   ListPuzzlesResponse,
   LoginRequest,
   LoginResponse,
+  PgnImportModeValue,
   PuzzleDetail,
   TrainingAttemptRequest,
   TrainingAttemptResponse,
@@ -47,7 +52,10 @@ export class ApiError extends Error {
 async function request<T>(path: string, options: RequestInit = {}): Promise<T | null> {
   const token = getStoredToken();
   const headers = new Headers(options.headers);
-  headers.set("Content-Type", "application/json");
+  // A FormData body must keep the browser-generated multipart Content-Type, boundary and all.
+  if (!(options.body instanceof FormData)) {
+    headers.set("Content-Type", "application/json");
+  }
   if (token) {
     headers.set("Authorization", `Bearer ${token}`);
   }
@@ -103,4 +111,62 @@ export function updatePuzzle(id: string, body: UpdatePuzzleRequest): Promise<Upd
 
 export function deletePuzzle(id: string): Promise<null> {
   return request<null>(`/puzzles/${id}`, { method: "DELETE" });
+}
+
+export interface ImportUpload {
+  file: File;
+  kind: ImportKindValue;
+  mode?: PgnImportModeValue;
+  plies?: number[];
+}
+
+/** The caller owns the Idempotency-Key so that retrying a failed upload replays rather than
+ * re-imports (plan §3.5). */
+export function previewImport(upload: ImportUpload, idempotencyKey: string): Promise<ImportBatchResponse | null> {
+  const form = new FormData();
+  form.append("file", upload.file);
+  form.append("kind", upload.kind);
+  if (upload.mode) {
+    form.append("mode", upload.mode);
+  }
+  if (upload.plies && upload.plies.length > 0) {
+    form.append("plies", upload.plies.join(","));
+  }
+
+  return request<ImportBatchResponse>("/imports", {
+    method: "POST",
+    body: form,
+    headers: { "Idempotency-Key": idempotencyKey },
+  });
+}
+
+export function commitImport(batchId: string, skipIndices: number[]): Promise<CommitImportResponse | null> {
+  return request<CommitImportResponse>(`/imports/${batchId}/commit`, {
+    method: "POST",
+    body: JSON.stringify(skipIndices.length > 0 ? { skipIndices } : {}),
+  });
+}
+
+/** Downloads through `fetch` rather than a plain link so the Authorization header is sent. */
+export async function downloadExport(query: ExportPuzzlesQuery): Promise<void> {
+  const params = new URLSearchParams({
+    format: query.format,
+    includeCards: String(query.includeCards),
+    includeReviews: String(query.includeReviews),
+  });
+
+  const token = getStoredToken();
+  const response = await fetch(`${API_BASE_URL}/puzzles/export?${params.toString()}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, "Export failed");
+  }
+
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `puzzles.${query.format}`;
+  link.click();
+  URL.revokeObjectURL(url);
 }
