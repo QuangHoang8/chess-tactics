@@ -10,6 +10,9 @@ import type {
   LoginResponse,
   PgnImportModeValue,
   PuzzleDetail,
+  RestoreResponse,
+  StatsQuery,
+  StatsResponse,
   TrainingAttemptRequest,
   TrainingAttemptResponse,
   TrainingHintRequest,
@@ -21,6 +24,8 @@ import type {
   TrainingSkipResponse,
   UpdatePuzzleRequest,
   UpdatePuzzleResponse,
+  UpdateSettingsRequest,
+  UserSettings,
 } from "@chess-tactics/contracts";
 
 const API_BASE_URL: string = import.meta.env.VITE_API_URL ?? "http://localhost:3000/api";
@@ -173,18 +178,60 @@ export async function downloadExport(query: ExportPuzzlesQuery): Promise<void> {
     includeReviews: String(query.includeReviews),
   });
 
+  await downloadAuthenticated(`/puzzles/export?${params.toString()}`, `puzzles.${query.format}`);
+}
+
+export function getStats(query: Partial<StatsQuery> = {}): Promise<StatsResponse | null> {
+  const params = new URLSearchParams();
+  if (query.from) {
+    params.set("from", query.from);
+  }
+  if (query.to) {
+    params.set("to", query.to);
+  }
+  if (query.groupBy) {
+    params.set("groupBy", query.groupBy);
+  }
+
+  const suffix = params.toString();
+  return request<StatsResponse>(`/stats${suffix ? `?${suffix}` : ""}`);
+}
+
+export function getSettings(): Promise<UserSettings | null> {
+  return request<UserSettings>("/settings");
+}
+
+export function updateSettings(body: UpdateSettingsRequest): Promise<UserSettings | null> {
+  return request<UserSettings>("/settings", { method: "PATCH", body: JSON.stringify(body) });
+}
+
+export function downloadBackup(filename: string): Promise<void> {
+  return downloadAuthenticated("/backup", filename);
+}
+
+/**
+ * Takes the backup file's text and forwards it as the request body unchanged. The browser has no
+ * reason to understand the document -- `POST /restore` validates it against the same Zod schema
+ * that produced it, and parsing here only to re-serialise would double the memory a large
+ * collection costs.
+ */
+export function restoreBackup(serialisedDocument: string): Promise<RestoreResponse | null> {
+  return request<RestoreResponse>("/restore", { method: "POST", body: serialisedDocument });
+}
+
+async function downloadAuthenticated(path: string, filename: string): Promise<void> {
   const token = getStoredToken();
-  const response = await fetch(`${API_BASE_URL}/puzzles/export?${params.toString()}`, {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!response.ok) {
-    throw new ApiError(response.status, "Export failed");
+    throw new ApiError(response.status, `Download of ${filename} failed`);
   }
 
   const url = URL.createObjectURL(await response.blob());
   const link = document.createElement("a");
   link.href = url;
-  link.download = `puzzles.${query.format}`;
+  link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
 }
