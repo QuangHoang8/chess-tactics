@@ -5,9 +5,12 @@ import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
 import { AuthModule } from "./auth/auth.module";
 import { JwtAuthGuard } from "./auth/jwt-auth.guard";
+import { BackupModule } from "./backup/backup.module";
 import { ImportsModule } from "./imports/imports.module";
 import { PrismaModule } from "./prisma/prisma.module";
 import { PuzzlesModule } from "./puzzles/puzzles.module";
+import { SettingsModule } from "./settings/settings.module";
+import { StatsModule } from "./stats/stats.module";
 import { TrainingModule } from "./training/training.module";
 
 @Module({
@@ -18,6 +21,9 @@ import { TrainingModule } from "./training/training.module";
     TrainingModule,
     PuzzlesModule,
     ImportsModule,
+    SettingsModule,
+    StatsModule,
+    BackupModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: JwtAuthGuard }],

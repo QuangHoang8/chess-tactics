@@ -1,8 +1,9 @@
 # Import and export formats
 
-Three import formats — **JSON**, **CSV** and **PGN** — and two export formats — **JSON** and
-**CSV**. Every format ends up in the same place: a `Puzzle` row plus its `PuzzleMove` tree, as
-defined in [`implementation-plan.md`](./implementation-plan.md) §4.
+Three import formats — **JSON**, **CSV** and **PGN** — two export formats — **JSON** and **CSV** —
+and, separately, a full-fidelity backup document (§6). Every import format ends up in the same
+place: a `Puzzle` row plus its `PuzzleMove` tree, as defined in
+[`implementation-plan.md`](./implementation-plan.md) §4.
 
 Whatever the format, an imported puzzle runs through the **same** `validateSolution` that
 `POST /api/puzzles` uses (plan §3.4). There is no laxer import path: an illegal SAN is rejected
@@ -25,7 +26,10 @@ The parsers live in `packages/domain/src/formats/`.
 **JSON is the only lossless format.** CSV and PGN both carry a single linear line, so they cannot
 express the move *tree* of plan §3.3 — the explicitly accepted alternatives at a ply, and the
 opponent replies a puzzle handles. Export a branched puzzle to CSV and you get its primary line
-only. Use `format=json` to back a collection up.
+only.
+
+All three are *sharing* formats: they move puzzles between installs. None of them is a backup —
+for that, see §6.
 
 ---
 
@@ -250,4 +254,44 @@ CSV export emits the §2 columns, plus the card columns when `includeCards` is s
 puzzle.
 
 > Export is for moving puzzles between installs. For a complete, restorable backup including
-> settings, `GET /api/backup` (Phase 5) is the right endpoint.
+> settings, `GET /api/backup` is the right endpoint — see §6.
+
+---
+
+## 6. Backup and restore
+
+`GET /api/backup` returns one JSON document holding everything stored for the account; `POST
+/api/restore` takes that document back. The Settings page drives both.
+
+This is a **different format from §1/§5 export**, and deliberately so. Export drops the columns a
+sharing format has no use for — most importantly `ReviewLog.stateBefore`, which is what the queue
+builder's new-versus-review split reads, and the FSRS optimiser inputs plan §3.5 exists to
+preserve. A collection rebuilt from an export would train differently from the one it came from.
+A collection rebuilt from a backup trains identically.
+
+```jsonc
+{
+  "version": 1,
+  "exportedAt": "2026-06-15T12:00:00.000Z",
+  "settings": { "timezone": "UTC", "dayRolloverHour": 0, "newPerDay": 20, "reviewsPerDay": null },
+  "puzzles":    [ /* every Puzzle column except importBatchId, ids included */ ],
+  "moves":      [ /* every PuzzleMove, flat, with parentId intact */ ],
+  "cards":      [ /* every PuzzleCard, including learningStep */ ],
+  "reviewLogs": [ /* every ReviewLog column, including the FSRS inputs */ ]
+}
+```
+
+The tables are flat and every primary key travels with its row, because restore has to rebuild the
+`parentId` links of the solution tree and each review log's `cardId` exactly as they were.
+
+**Restore replaces.** It deletes the account's puzzles — cascading to their moves, cards and review
+logs — and writes the document's rows in their place, all inside one transaction. It does not
+merge: merging would double every row on a second restore and collide with the
+`(userId, dedupeHash)` uniqueness constraint. The web UI asks for confirmation before sending.
+
+Two checks run before anything is written. The document must declare `version: 1`, and every id a
+row points at must exist elsewhere in the same document; a dangling `cardId` or `parentId` is
+reported as a `400` naming the row, not as a foreign-key error from inside the transaction.
+
+`ImportBatch` rows are not in the document. A batch records an import run rather than training
+data, so restored puzzles simply carry no batch.
