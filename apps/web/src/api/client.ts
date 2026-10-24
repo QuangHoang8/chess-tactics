@@ -12,7 +12,13 @@ import type {
   PuzzleDetail,
   TrainingAttemptRequest,
   TrainingAttemptResponse,
+  TrainingHintRequest,
+  TrainingHintResponse,
   TrainingNextResponse,
+  TrainingReviewRequest,
+  TrainingReviewResponse,
+  TrainingSkipRequest,
+  TrainingSkipResponse,
   UpdatePuzzleRequest,
   UpdatePuzzleResponse,
 } from "@chess-tactics/contracts";
@@ -90,6 +96,18 @@ export function trainingAttempt(body: TrainingAttemptRequest): Promise<TrainingA
     method: "POST",
     body: JSON.stringify(body),
   });
+}
+
+export function trainingHint(body: TrainingHintRequest): Promise<TrainingHintResponse | null> {
+  return request<TrainingHintResponse>("/training/hint", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function trainingSkip(body: TrainingSkipRequest): Promise<TrainingSkipResponse | null> {
+  return request<TrainingSkipResponse>("/training/skip", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function trainingReview(body: TrainingReviewRequest): Promise<TrainingReviewResponse | null> {
+  return request<TrainingReviewResponse>("/training/review", { method: "POST", body: JSON.stringify(body) });
 }
 
 export function listPuzzles(cursor?: string): Promise<ListPuzzlesResponse | null> {

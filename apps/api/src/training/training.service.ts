@@ -1,80 +1,88 @@
-import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { randomUUID } from "node:crypto";
-import type { PuzzleMove } from "@prisma/client";
-import { applyMove, applySan } from "@chess-tactics/domain";
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
+import type { PuzzleCard, PuzzleMove, TrainingSession } from "@prisma/client";
+import { applyMove, applySan, schedule, type SchedulingCard } from "@chess-tactics/domain";
 import type {
   TrainingAttemptRequest,
   TrainingAttemptResponse,
+  TrainingHintRequest,
+  TrainingHintResponse,
   TrainingNextResponse,
+  TrainingReviewRequest,
+  TrainingReviewResponse,
+  TrainingSkipRequest,
+  TrainingSkipResponse,
 } from "@chess-tactics/contracts";
 import { PrismaService } from "../prisma/prisma.service";
-import { TrainingSessionProgress, TrainingSessionStore } from "./training-session-store";
+import { getEffectiveSettings } from "./settings";
+import { pickNextCard } from "./queue";
+import { primaryLine, primaryOf, resolveFen, solverCandidates } from "./solution-tree";
+
+/** Beyond this, an `endedAt: null` row is treated as abandoned rather than resumable (plan §4.6) --
+ * a crashed/forgotten tab should not permanently shadow the queue builder. */
+const RESUME_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+const PIECE_NAMES: Record<string, string> = { K: "king", Q: "queen", R: "rook", B: "bishop", N: "knight" };
 
 @Injectable()
 export class TrainingService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly sessions: TrainingSessionStore,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async getNext(userId: string): Promise<TrainingNextResponse | null> {
-    // Phase 1 simplification: serve NEW cards in insertion order. Overdue-first prioritisation
-    // and the newPerDay/reviewsPerDay caps (plan §4.3) land in Phase 4.
-    const card = await this.prisma.puzzleCard.findFirst({
-      where: { userId, state: "NEW" },
-      orderBy: { puzzle: { createdAt: "asc" } },
-      include: { puzzle: true },
-    });
+    const now = new Date();
+    const resumed = await this.tryResume(userId, now);
+    if (resumed) {
+      return resumed;
+    }
 
+    const settings = await getEffectiveSettings(this.prisma, userId);
+    const card = await pickNextCard(this.prisma, userId, settings, now);
     if (!card) {
       return null;
     }
 
-    const sessionId = randomUUID();
-    this.sessions.create(sessionId, {
-      userId,
-      puzzleId: card.puzzleId,
-      currentNodeId: null,
-      currentFen: card.puzzle.fen,
-    });
-
-    await this.prisma.trainingSession.create({
+    const session = await this.prisma.trainingSession.create({
       data: { userId, currentPuzzleId: card.puzzleId },
     });
 
     const sideToMove = card.puzzle.sideToMove === "b" ? "b" : "w";
     return {
-      sessionId,
+      sessionId: session.id,
       puzzleId: card.puzzleId,
       fen: card.puzzle.fen,
       sideToMove,
       boardOrientation: sideToMove === "w" ? "white" : "black",
       hintsAvailable: true,
       isResume: false,
+      solved: false,
     };
   }
 
   async attempt(userId: string, request: TrainingAttemptRequest): Promise<TrainingAttemptResponse> {
-    const progress = this.requireSession(userId, request);
+    const session = await this.requireActiveSession(userId, request.sessionId, request.puzzleId);
+    const puzzle = await this.prisma.puzzle.findUniqueOrThrow({ where: { id: request.puzzleId } });
+    const currentFen = await resolveFen(this.prisma, puzzle.id, puzzle.fen, session.currentNodeId);
 
     // Zod's `.optional()` infers `promotion?: T | undefined`; domain's MoveInput (under
     // exactOptionalPropertyTypes) wants the key omitted entirely rather than set to undefined.
     const { from, to, promotion } = request.move;
     const moveInput = promotion === undefined ? { from, to } : { from, to, promotion };
 
-    const applied = applyMove(progress.currentFen, moveInput);
+    const applied = applyMove(currentFen, moveInput);
     if (!applied.ok) {
-      // Rules-illegal move: rejected, no state change (plan §4.5: "carries no state change").
-      return this.rejected(progress);
+      // Rules-illegal move: rejected, no state change beyond recording the attempt.
+      return this.rejected(session);
     }
 
-    const candidates = await this.prisma.puzzleMove.findMany({
-      where: { puzzleId: progress.puzzleId, parentId: progress.currentNodeId, actor: "SOLVER" },
-    });
+    const candidates = await solverCandidates(this.prisma, puzzle.id, session.currentNodeId);
     const matched = candidates.find((candidate) => candidate.san === applied.san);
     if (!matched) {
-      // Legal chess move, but not one of this puzzle's accepted lines: rejected, no state change.
-      return this.rejected(progress);
+      // Legal chess move, but not one of this puzzle's accepted lines: rejected.
+      return this.rejected(session);
     }
 
     const opponentReplies = await this.prisma.puzzleMove.findMany({
@@ -82,11 +90,21 @@ export class TrainingService {
     });
 
     if (opponentReplies.length === 0) {
-      await this.markSolved(request.sessionId, progress.puzzleId);
-      return { accepted: true, normalisedSan: applied.san, fen: applied.fen, solved: true, remainingPlies: 0 };
+      await this.prisma.trainingSession.update({
+        where: { id: session.id },
+        data: { currentNodeId: matched.id, solved: true },
+      });
+      return {
+        accepted: true,
+        normalisedSan: applied.san,
+        fen: applied.fen,
+        solved: true,
+        remainingPlies: 0,
+        ...(puzzle.explanation !== null ? { explanation: puzzle.explanation } : {}),
+      };
     }
 
-    const opponentNode = opponentReplies.find((node) => node.isPrimary) ?? opponentReplies[0];
+    const opponentNode = primaryOf(opponentReplies);
     if (!opponentNode) {
       throw new Error(`Unreachable: opponentReplies had ${opponentReplies.length} elements`);
     }
@@ -100,10 +118,9 @@ export class TrainingService {
       );
     }
 
-    this.sessions.update(request.sessionId, {
-      ...progress,
-      currentNodeId: opponentNode.id,
-      currentFen: opponentApplied.fen,
+    await this.prisma.trainingSession.update({
+      where: { id: session.id },
+      data: { currentNodeId: opponentNode.id },
     });
 
     return {
@@ -116,37 +133,170 @@ export class TrainingService {
     };
   }
 
-  private requireSession(userId: string, request: TrainingAttemptRequest): TrainingSessionProgress {
-    const progress = this.sessions.get(request.sessionId);
-    if (!progress) {
-      throw new NotFoundException("Training session not found or expired");
+  async hint(userId: string, request: TrainingHintRequest): Promise<TrainingHintResponse> {
+    const session = await this.requireActiveSession(userId, request.sessionId, request.puzzleId);
+    const puzzle = await this.prisma.puzzle.findUniqueOrThrow({ where: { id: request.puzzleId } });
+
+    if (request.level === 1) {
+      const text =
+        puzzle.themes.length > 0 ? `Theme: ${puzzle.themes.join(", ")}.` : "No themes recorded for this puzzle.";
+      return { level: 1, text };
     }
-    if (progress.userId !== userId) {
-      throw new ForbiddenException();
+
+    const candidates = await solverCandidates(this.prisma, puzzle.id, session.currentNodeId);
+    const next = primaryOf(candidates);
+    if (!next) {
+      throw new BadRequestException("This puzzle has no further moves to hint -- it's already solved");
     }
-    if (progress.puzzleId !== request.puzzleId) {
-      throw new NotFoundException("Puzzle does not match this session");
+
+    if (request.level === 2) {
+      return { level: 2, text: `The next move is played by a ${pieceNameFromSan(next.san)}.` };
     }
-    return progress;
+    return { level: 3, text: `The next move is ${next.san}.` };
   }
 
-  private async rejected(progress: TrainingSessionProgress): Promise<TrainingAttemptResponse> {
+  async skip(userId: string, request: TrainingSkipRequest): Promise<TrainingSkipResponse> {
+    const session = await this.requireActiveSession(userId, request.sessionId, request.puzzleId);
+    const puzzle = await this.prisma.puzzle.findUniqueOrThrow({ where: { id: request.puzzleId } });
+    const solutionLine = await primaryLine(this.prisma, puzzle.id);
+
+    await this.prisma.trainingSession.update({ where: { id: session.id }, data: { skipped: true } });
+
     return {
-      accepted: false,
-      solved: false,
-      remainingPlies: await this.countPrimaryChain(progress.currentNodeId, progress.puzzleId),
+      solutionLine,
+      ...(puzzle.explanation !== null ? { explanation: puzzle.explanation } : {}),
     };
   }
 
-  private async markSolved(sessionId: string, puzzleId: string): Promise<void> {
-    this.sessions.delete(sessionId);
-    // Only a true fact is persisted here. Phase 1 has no review endpoint (that's Phase 4.4), so
-    // no ReviewLog row and no SM-2 state change is written -- fabricating one would poison the
-    // Phase 5 stats and a future FSRS migration with an invented rating.
-    await this.prisma.puzzleCard.update({
-      where: { puzzleId },
-      data: { lastReviewedAt: new Date() },
+  async review(userId: string, request: TrainingReviewRequest): Promise<TrainingReviewResponse> {
+    const session = await this.requireActiveSession(userId, request.sessionId, request.puzzleId);
+    if (!session.solved && !session.skipped) {
+      throw new BadRequestException("Puzzle must be solved or skipped before it can be reviewed");
+    }
+
+    const card = await this.prisma.puzzleCard.findFirst({ where: { userId, puzzleId: request.puzzleId } });
+    if (!card) {
+      throw new NotFoundException("Puzzle card not found");
+    }
+
+    const now = new Date();
+    const result = schedule(toSchedulingCard(card), request.rating, now);
+    // Plan §3.5's ReviewLog.correct is an objective solve-quality signal, independent of the
+    // player's self-chosen rating: a skip, or any rejected attempt along the way, means they did
+    // not solve it cleanly even if they later pick a generous rating.
+    const correct = session.solved && !session.skipped && !session.hadRejectedAttempt;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.reviewLog.create({
+        data: {
+          userId,
+          puzzleId: request.puzzleId,
+          cardId: card.id,
+          rating: request.rating,
+          correct,
+          hintsUsed: request.hintsUsed,
+          durationMs: request.durationMs,
+          reviewedAt: now,
+          elapsedDays: result.elapsedDays,
+          scheduledDays: result.scheduledDays,
+          intervalBefore: card.intervalDays,
+          easeBefore: card.easeFactor,
+          repsBefore: card.repetitions,
+          lapsesBefore: card.lapses,
+          stateBefore: card.state,
+        },
+      });
+      await tx.puzzleCard.update({
+        where: { id: card.id },
+        data: {
+          state: result.state,
+          dueAt: result.dueAt,
+          intervalDays: result.intervalDays,
+          easeFactor: result.easeFactor,
+          repetitions: result.repetitions,
+          lapses: result.lapses,
+          learningStep: result.learningStep,
+          lastReviewedAt: now,
+        },
+      });
+      await tx.trainingSession.update({ where: { id: session.id }, data: { endedAt: now } });
     });
+
+    return {
+      nextDueAt: result.dueAt.toISOString(),
+      intervalDays: result.intervalDays,
+      easeFactor: result.easeFactor,
+      state: result.state,
+    };
+  }
+
+  /** Plan §4.6: resumes the most recent still-open session, replaying its FEN from the stored
+   * move tree. A session that is stale (past RESUME_WINDOW_MS) or whose card has disappeared is
+   * closed out instead of resumed, so it stops shadowing future getNext() calls. */
+  private async tryResume(userId: string, now: Date): Promise<TrainingNextResponse | null> {
+    const open = await this.prisma.trainingSession.findFirst({
+      where: { userId, endedAt: null },
+      orderBy: { startedAt: "desc" },
+    });
+    if (!open) {
+      return null;
+    }
+
+    const stale = now.getTime() - open.startedAt.getTime() > RESUME_WINDOW_MS;
+    const card = open.currentPuzzleId
+      ? await this.prisma.puzzleCard.findFirst({
+          where: { userId, puzzleId: open.currentPuzzleId },
+          include: { puzzle: true },
+        })
+      : null;
+
+    if (stale || !card) {
+      await this.prisma.trainingSession.update({ where: { id: open.id }, data: { endedAt: now } });
+      return null;
+    }
+
+    const fen = await resolveFen(this.prisma, card.puzzleId, card.puzzle.fen, open.currentNodeId);
+    const sideToMove = card.puzzle.sideToMove === "b" ? "b" : "w";
+    return {
+      sessionId: open.id,
+      puzzleId: card.puzzleId,
+      fen,
+      sideToMove,
+      boardOrientation: sideToMove === "w" ? "white" : "black",
+      hintsAvailable: true,
+      isResume: true,
+      solved: open.solved,
+    };
+  }
+
+  private async requireActiveSession(
+    userId: string,
+    sessionId: string,
+    puzzleId: string,
+  ): Promise<TrainingSession> {
+    const session = await this.prisma.trainingSession.findUnique({ where: { id: sessionId } });
+    if (!session || session.endedAt !== null) {
+      throw new NotFoundException("Training session not found or expired");
+    }
+    if (session.userId !== userId) {
+      throw new ForbiddenException();
+    }
+    if (session.currentPuzzleId !== puzzleId) {
+      throw new NotFoundException("Puzzle does not match this session");
+    }
+    return session;
+  }
+
+  private async rejected(session: TrainingSession): Promise<TrainingAttemptResponse> {
+    await this.prisma.trainingSession.update({
+      where: { id: session.id },
+      data: { hadRejectedAttempt: true },
+    });
+    return {
+      accepted: false,
+      solved: false,
+      remainingPlies: await this.countPrimaryChain(session.currentNodeId, session.currentPuzzleId ?? undefined),
+    };
   }
 
   /** Counts remaining SOLVER nodes down the primary line, for UI progress hinting only. */
@@ -171,4 +321,25 @@ export class TrainingService {
     const ownCount = primary.actor === "SOLVER" ? 1 : 0;
     return ownCount + (await this.countPrimaryChain(primary.id));
   }
+}
+
+function toSchedulingCard(card: PuzzleCard): SchedulingCard {
+  return {
+    state: card.state,
+    intervalDays: card.intervalDays,
+    easeFactor: card.easeFactor,
+    repetitions: card.repetitions,
+    lapses: card.lapses,
+    learningStep: card.learningStep,
+    lastReviewedAt: card.lastReviewedAt,
+  };
+}
+
+function pieceNameFromSan(san: string): string {
+  const clean = san.replace(/[+#!?]+$/g, "");
+  if (clean === "O-O" || clean === "O-O-O") {
+    return "king";
+  }
+  const first = clean[0];
+  return first && first in PIECE_NAMES ? (PIECE_NAMES[first] ?? "pawn") : "pawn";
 }

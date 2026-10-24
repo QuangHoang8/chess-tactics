@@ -210,7 +210,9 @@ model ImportBatch {
   @@unique([userId, idempotencyKey])
 }
 
-/// Enables resume-after-refresh (plan §3, functional requirement 3).
+/// Enables resume-after-refresh (plan §3, functional requirement 3; durable progress since §4.6).
+/// `endedAt: null` means "in progress" -- getNext() resumes the most recent such row rather than
+/// serving a new card, replaying `currentFen` from `currentNodeId` (plan §4.5's TreeNode position).
 model TrainingSession {
   id     String @id @default(cuid())
   userId String
@@ -221,4 +223,13 @@ model TrainingSession {
   newServed       Int       @default(0)
   reviewsServed   Int       @default(0)
   currentPuzzleId String?
+  /// Which PuzzleMove node the player is at; null = at the puzzle root, no move played yet.
+  currentNodeId   String?
+  /// True once the final SOLVER move has been accepted -- a review is still owed.
+  solved          Boolean   @default(false)
+  /// True once the player gave up via POST /training/skip -- forces ReviewLog.correct=false
+  /// regardless of the rating they later submit (they saw the answer, they didn't solve it).
+  skipped         Boolean   @default(false)
+  /// True if any move attempt during this session was rejected -- also forces correct=false.
+  hadRejectedAttempt Boolean @default(false)
 }

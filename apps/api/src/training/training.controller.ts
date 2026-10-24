@@ -1,6 +1,16 @@
 import { Body, Controller, Get, HttpStatus, Post, Res } from "@nestjs/common";
 import type { Response } from "express";
-import { TrainingAttemptRequestDto, type TrainingAttemptResponse, type TrainingNextResponse } from "@chess-tactics/contracts";
+import {
+  TrainingAttemptRequestDto,
+  TrainingHintRequestDto,
+  TrainingReviewRequestDto,
+  TrainingSkipRequestDto,
+  type TrainingAttemptResponse,
+  type TrainingHintResponse,
+  type TrainingNextResponse,
+  type TrainingReviewResponse,
+  type TrainingSkipResponse,
+} from "@chess-tactics/contracts";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { AuthenticatedUser } from "../auth/jwt.strategy";
 import { TrainingService } from "./training.service";
@@ -29,5 +39,29 @@ export class TrainingController {
     @Body() body: TrainingAttemptRequestDto,
   ): Promise<TrainingAttemptResponse> {
     return this.trainingService.attempt(user.userId, body);
+  }
+
+  @Post("hint")
+  hint(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() body: TrainingHintRequestDto,
+  ): Promise<TrainingHintResponse> {
+    return this.trainingService.hint(user.userId, body);
+  }
+
+  @Post("skip")
+  skip(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() body: TrainingSkipRequestDto,
+  ): Promise<TrainingSkipResponse> {
+    return this.trainingService.skip(user.userId, body);
+  }
+
+  @Post("review")
+  review(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() body: TrainingReviewRequestDto,
+  ): Promise<TrainingReviewResponse> {
+    return this.trainingService.review(user.userId, body);
   }
 }

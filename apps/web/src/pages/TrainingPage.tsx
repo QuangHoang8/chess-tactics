@@ -1,7 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Chessboard, type PieceDropHandlerArgs } from "react-chessboard";
-import type { MoveInput } from "@chess-tactics/contracts";
-import { ApiError, trainingAttempt, trainingNext } from "../api/client";
+import type { MoveInput, RatingValue, TrainingSkipResponse } from "@chess-tactics/contracts";
+import {
+  ApiError,
+  trainingAttempt,
+  trainingHint,
+  trainingNext,
+  trainingReview,
+  trainingSkip,
+} from "../api/client";
 import { PromotionPicker } from "../components/PromotionPicker";
 
 type Status = "loading" | "ready" | "empty" | "error";
@@ -12,6 +19,7 @@ interface PendingPromotion {
 }
 
 const WAKING_THRESHOLD_MS = 1500;
+const RATINGS: RatingValue[] = ["AGAIN", "HARD", "GOOD", "EASY"];
 
 export function TrainingPage() {
   const [status, setStatus] = useState<Status>("loading");
@@ -24,32 +32,56 @@ export function TrainingPage() {
   const [pendingPromotion, setPendingPromotion] = useState<PendingPromotion | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [solved, setSolved] = useState(false);
+  const [explanation, setExplanation] = useState<string | null>(null);
+  const [skipReveal, setSkipReveal] = useState<TrainingSkipResponse | null>(null);
+  const [hintText, setHintText] = useState<string | null>(null);
+  const [nextHintLevel, setNextHintLevel] = useState<1 | 2 | 3>(1);
+  const [hintExhausted, setHintExhausted] = useState(false);
+  const [hintsUsed, setHintsUsed] = useState(0);
+  const [puzzleStartedAt, setPuzzleStartedAt] = useState(() => Date.now());
+  const [submittingReview, setSubmittingReview] = useState(false);
+  const unmountedRef = useRef(false);
 
-  useEffect(() => {
-    let cancelled = false;
+  function resetPerPuzzleState(): void {
+    setPendingPromotion(null);
+    setFeedback(null);
+    setSolved(false);
+    setExplanation(null);
+    setSkipReveal(null);
+    setHintText(null);
+    setNextHintLevel(1);
+    setHintExhausted(false);
+    setHintsUsed(0);
+    setPuzzleStartedAt(Date.now());
+  }
+
+  function loadNext(): void {
+    setStatus("loading");
     const wakingTimer = setTimeout(() => {
-      if (!cancelled) {
+      if (!unmountedRef.current) {
         setWaking(true);
       }
     }, WAKING_THRESHOLD_MS);
 
     trainingNext()
       .then((result) => {
-        if (cancelled) {
+        if (unmountedRef.current) {
           return;
         }
         if (!result) {
           setStatus("empty");
           return;
         }
+        resetPerPuzzleState();
         setSessionId(result.sessionId);
         setPuzzleId(result.puzzleId);
         setBoardOrientation(result.boardOrientation);
         setPosition(result.fen);
+        setSolved(result.solved);
         setStatus("ready");
       })
       .catch((error: unknown) => {
-        if (cancelled) {
+        if (unmountedRef.current) {
           return;
         }
         setErrorMessage(error instanceof ApiError ? error.message : "Failed to load the next puzzle");
@@ -57,15 +89,18 @@ export function TrainingPage() {
       })
       .finally(() => {
         clearTimeout(wakingTimer);
-        if (!cancelled) {
+        if (!unmountedRef.current) {
           setWaking(false);
         }
       });
+  }
 
+  useEffect(() => {
+    loadNext();
     return () => {
-      cancelled = true;
-      clearTimeout(wakingTimer);
+      unmountedRef.current = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function submitMove(move: MoveInput, previousPosition: string): Promise<void> {
@@ -84,7 +119,7 @@ export function TrainingPage() {
       if (result.solved) {
         setPosition(result.fen ?? previousPosition);
         setSolved(true);
-        setFeedback("Solved!");
+        setExplanation(result.explanation ?? null);
         return;
       }
       setPosition(result.opponentReply?.fen ?? result.fen ?? previousPosition);
@@ -121,6 +156,64 @@ export function TrainingPage() {
     const { from, to } = pendingPromotion;
     setPendingPromotion(null);
     void submitMove({ from, to, promotion }, position);
+  }
+
+  async function handleHint(): Promise<void> {
+    if (!sessionId || !puzzleId || solved || hintExhausted) {
+      return;
+    }
+    try {
+      const result = await trainingHint({ sessionId, puzzleId, level: nextHintLevel });
+      if (!result) {
+        return;
+      }
+      setHintText(result.text);
+      setHintsUsed((count) => count + 1);
+      if (nextHintLevel < 3) {
+        setNextHintLevel((nextHintLevel + 1) as 1 | 2 | 3);
+      } else {
+        setHintExhausted(true);
+      }
+    } catch (error) {
+      setFeedback(error instanceof ApiError ? error.message : "Could not fetch a hint.");
+    }
+  }
+
+  async function handleSkip(): Promise<void> {
+    if (!sessionId || !puzzleId || solved) {
+      return;
+    }
+    try {
+      const result = await trainingSkip({ sessionId, puzzleId });
+      if (!result) {
+        return;
+      }
+      setSkipReveal(result);
+      setSolved(true);
+    } catch (error) {
+      setFeedback(error instanceof ApiError ? error.message : "Could not skip this puzzle.");
+    }
+  }
+
+  async function handleRate(rating: RatingValue): Promise<void> {
+    if (!sessionId || !puzzleId || submittingReview) {
+      return;
+    }
+    setSubmittingReview(true);
+    try {
+      await trainingReview({
+        sessionId,
+        puzzleId,
+        rating,
+        hintsUsed,
+        durationMs: Date.now() - puzzleStartedAt,
+      });
+      loadNext();
+    } catch (error) {
+      setFeedback(error instanceof ApiError ? error.message : "Could not submit that review.");
+    } finally {
+      setSubmittingReview(false);
+    }
   }
 
   if (status === "loading") {
@@ -161,6 +254,47 @@ export function TrainingPage() {
       {feedback && <p>{feedback}</p>}
       {pendingPromotion && (
         <PromotionPicker onSelect={handlePromotionSelect} onCancel={() => setPendingPromotion(null)} />
+      )}
+
+      {!solved && (
+        <div className="training-controls">
+          <button type="button" onClick={() => void handleHint()} disabled={hintExhausted}>
+            Hint ({nextHintLevel}/3)
+          </button>
+          <button type="button" onClick={() => void handleSkip()}>
+            Skip
+          </button>
+        </div>
+      )}
+      {hintText && !solved && <p>{hintText}</p>}
+
+      {solved && (
+        <div className="training-review">
+          {skipReveal ? (
+            <>
+              <p>Solution: {skipReveal.solutionLine.join(" ")}</p>
+              {skipReveal.explanation && <p>{skipReveal.explanation}</p>}
+            </>
+          ) : (
+            <>
+              <p>Solved!</p>
+              {explanation && <p>{explanation}</p>}
+            </>
+          )}
+          <p>How did that go?</p>
+          <div className="training-ratings">
+            {RATINGS.map((rating) => (
+              <button
+                key={rating}
+                type="button"
+                disabled={submittingReview}
+                onClick={() => void handleRate(rating)}
+              >
+                {rating}
+              </button>
+            ))}
+          </div>
+        </div>
       )}
     </main>
   );
