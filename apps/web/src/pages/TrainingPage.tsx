@@ -37,6 +37,8 @@ export function TrainingPage() {
   const [hintText, setHintText] = useState<string | null>(null);
   const [nextHintLevel, setNextHintLevel] = useState<1 | 2 | 3>(1);
   const [hintExhausted, setHintExhausted] = useState(false);
+  // Resets to 0 on a resumed session (plan §4.6) -- hints taken before a refresh aren't recoverable
+  // from the server, since hintsUsed is client-reported only (plan §4.5's /training/review body).
   const [hintsUsed, setHintsUsed] = useState(0);
   const [puzzleStartedAt, setPuzzleStartedAt] = useState(() => Date.now());
   const [submittingReview, setSubmittingReview] = useState(false);
@@ -96,6 +98,10 @@ export function TrainingPage() {
   }
 
   useEffect(() => {
+    // StrictMode runs setup -> cleanup -> setup in dev; without resetting this, the first
+    // (discarded) cleanup would permanently flag every later loadNext() as "unmounted" and the
+    // page would sit on "Loading..." forever.
+    unmountedRef.current = false;
     loadNext();
     return () => {
       unmountedRef.current = true;

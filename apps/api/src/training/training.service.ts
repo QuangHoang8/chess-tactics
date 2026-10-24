@@ -265,7 +265,10 @@ export class TrainingService {
       boardOrientation: sideToMove === "w" ? "white" : "black",
       hintsAvailable: true,
       isResume: true,
-      solved: open.solved,
+      // A skip also leaves nothing left to solve, so a resumed-after-skip session must show the
+      // rating UI too, not a draggable board with no further moves to make -- review() already
+      // accepts either solved or skipped as the gate.
+      solved: open.solved || open.skipped,
     };
   }
 
