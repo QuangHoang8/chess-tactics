@@ -18,7 +18,7 @@ import type {
   TrainingSkipResponse,
 } from "@chess-tactics/contracts";
 import { PrismaService } from "../prisma/prisma.service";
-import { getEffectiveSettings } from "./settings";
+import { getEffectiveSettings } from "../settings/effective-settings";
 import { pickNextCard } from "./queue";
 import { primaryLine, primaryOf, resolveFen, solverCandidates } from "./solution-tree";
 

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { FakeTrainingPrisma } from "./fake-prisma";
 import { TrainingService } from "./training.service";
 import { pickNextCard } from "./queue";
-import type { EffectiveSettings } from "./settings";
+import type { EffectiveSettings } from "../settings/effective-settings";
 
 const USER = "user-1";
 

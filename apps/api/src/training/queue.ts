@@ -1,11 +1,14 @@
 import type { Puzzle, PuzzleCard } from "@prisma/client";
 import { civilDateFor } from "@chess-tactics/domain";
 import type { PrismaService } from "../prisma/prisma.service";
-import type { EffectiveSettings } from "./settings";
+import type { EffectiveSettings } from "../settings/effective-settings";
 
 export type QueuedCard = PuzzleCard & { puzzle: Puzzle };
 
-const DUE_STATES = ["LEARNING", "REVIEW", "RELEARNING"] as const;
+/** The states a card can be served from once its `dueAt` has passed. Exported so `GET /stats`
+ * reports the same "due now" population the queue would actually serve (plan §8: one definition,
+ * not a second laxer one alongside it). */
+export const DUE_STATES = ["LEARNING", "REVIEW", "RELEARNING"] as const;
 
 /** Wide enough to contain every instant that could fall on "today" under any timezone/rollover
  * combination, without needing to compute an exact UTC day boundary (plan day.ts's own doc comment
@@ -63,7 +66,9 @@ async function dueQueue(
   return rows.slice(0, remaining);
 }
 
-async function remainingNewBudget(
+/** How many new cards the day still allows. Exported for `GET /stats`'s `remainingNewToday`, which
+ * must be the number the queue will actually honour. */
+export async function remainingNewBudget(
   prisma: PrismaService,
   userId: string,
   settings: EffectiveSettings,
