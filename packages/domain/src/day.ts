@@ -22,3 +22,31 @@ export function civilDateFor(instant: Date, timezone: string, dayRolloverHour: n
 export function isSameTrainingDay(a: Date, b: Date, timezone: string, dayRolloverHour: number): boolean {
   return civilDateFor(a, timezone, dayRolloverHour) === civilDateFor(b, timezone, dayRolloverHour);
 }
+
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * Calendar arithmetic on a `YYYY-MM-DD` label, not on an instant. The label is interpreted as UTC
+ * midnight purely so `Date` can do the month/year carrying; because UTC has no DST, stepping days
+ * there can neither skip nor repeat one. Doing the same arithmetic in the user's zone is what
+ * would reintroduce the offset bug `civilDateFor` exists to avoid.
+ */
+export function addCivilDays(date: string, days: number): string {
+  const shifted = new Date(Date.parse(`${date}T00:00:00Z`) + days * MS_PER_DAY);
+  return shifted.toISOString().slice(0, 10);
+}
+
+/** How many civil dates `civilDateRange(from, to)` would yield, without building the array.
+ * Zero or negative when `to` precedes `from`. */
+export function civilDaysBetween(from: string, to: string): number {
+  return (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / MS_PER_DAY + 1;
+}
+
+/** Every civil date from `from` to `to` inclusive. Empty when `to` precedes `from`. */
+export function civilDateRange(from: string, to: string): string[] {
+  const dates: string[] = [];
+  for (let date = from; date <= to; date = addCivilDays(date, 1)) {
+    dates.push(date);
+  }
+  return dates;
+}

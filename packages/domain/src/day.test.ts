@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { civilDateFor, isSameTrainingDay } from "./day";
+import { addCivilDays, civilDateFor, civilDateRange, civilDaysBetween, isSameTrainingDay } from "./day";
 
 describe("civilDateFor", () => {
   it("with dayRolloverHour=0, equals the plain civil date", () => {
@@ -63,5 +63,44 @@ describe("isSameTrainingDay", () => {
     const a = new Date("2026-06-15T23:59:00.000Z");
     const b = new Date("2026-06-16T00:01:00.000Z");
     expect(isSameTrainingDay(a, b, "UTC", 0)).toBe(false);
+  });
+});
+
+describe("addCivilDays", () => {
+  it("carries across month, year and leap-day boundaries", () => {
+    expect(addCivilDays("2026-01-31", 1)).toBe("2026-02-01");
+    expect(addCivilDays("2026-12-31", 1)).toBe("2027-01-01");
+    expect(addCivilDays("2028-02-28", 1)).toBe("2028-02-29");
+    expect(addCivilDays("2026-02-28", 1)).toBe("2026-03-01");
+  });
+
+  it("steps backwards", () => {
+    expect(addCivilDays("2026-03-01", -1)).toBe("2026-02-28");
+    expect(addCivilDays("2026-01-30", -29)).toBe("2026-01-01");
+  });
+
+  it("is unaffected by a DST transition in any zone, because it is calendar arithmetic", () => {
+    // 2026-03-08 is the US spring-forward date; a zone-aware day-add could land back on the 8th.
+    expect(addCivilDays("2026-03-08", 1)).toBe("2026-03-09");
+    expect(addCivilDays("2026-11-01", 1)).toBe("2026-11-02");
+  });
+});
+
+describe("civilDaysBetween / civilDateRange", () => {
+  it("counts both endpoints", () => {
+    expect(civilDaysBetween("2026-06-15", "2026-06-15")).toBe(1);
+    expect(civilDaysBetween("2026-06-15", "2026-06-16")).toBe(2);
+    expect(civilDaysBetween("2026-01-01", "2026-12-31")).toBe(365);
+  });
+
+  it("agrees with the length of the range it describes", () => {
+    const range = civilDateRange("2026-02-26", "2026-03-02");
+    expect(range).toEqual(["2026-02-26", "2026-02-27", "2026-02-28", "2026-03-01", "2026-03-02"]);
+    expect(range).toHaveLength(civilDaysBetween("2026-02-26", "2026-03-02"));
+  });
+
+  it("yields nothing when `to` precedes `from`", () => {
+    expect(civilDateRange("2026-06-16", "2026-06-15")).toEqual([]);
+    expect(civilDaysBetween("2026-06-16", "2026-06-15")).toBe(0);
   });
 });

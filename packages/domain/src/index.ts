@@ -14,4 +14,10 @@ export {
   type ScheduleResult,
   type SchedulingCard,
 } from "./srs";
-export { civilDateFor, isSameTrainingDay } from "./day";
+export {
+  addCivilDays,
+  civilDateFor,
+  civilDateRange,
+  civilDaysBetween,
+  isSameTrainingDay,
+} from "./day";
