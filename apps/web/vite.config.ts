@@ -9,4 +9,10 @@ export default defineConfig({
     // (node_modules-only) and its named-export detection never runs on the CJS build.
     commonjsOptions: { include: [/node_modules/, /packages\/domain/] },
   },
+  optimizeDeps: {
+    // Same symlink issue affects the dev server: Vite only pre-bundles (and
+    // CJS->ESM converts) deps it finds in node_modules, so this workspace
+    // package must be force-included or its named exports 404 at runtime.
+    include: ["@chess-tactics/domain"],
+  },
 });
