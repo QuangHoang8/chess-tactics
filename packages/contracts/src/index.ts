@@ -4,3 +4,6 @@ export * from "./schemas/auth";
 export * from "./schemas/training";
 export * from "./schemas/puzzle";
 export * from "./schemas/import";
+export * from "./schemas/settings";
+export * from "./schemas/stats";
+export * from "./schemas/backup";
