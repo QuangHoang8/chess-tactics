@@ -289,9 +289,11 @@ logs — and writes the document's rows in their place, all inside one transacti
 merge: merging would double every row on a second restore and collide with the
 `(userId, dedupeHash)` uniqueness constraint. The web UI asks for confirmation before sending.
 
-Two checks run before anything is written. The document must declare `version: 1`, and every id a
-row points at must exist elsewhere in the same document; a dangling `cardId` or `parentId` is
-reported as a `400` naming the row, not as a foreign-key error from inside the transaction.
+Two checks run before anything is written, and they fail differently on purpose. A document that
+does not declare `version: 1` fails schema validation like any other malformed body — `422` with
+per-field `details`. A document that is well-formed but internally inconsistent — a `cardId` or
+`parentId` pointing at a row it does not contain — is a `400` naming the offending row, rather than
+a foreign-key error surfacing from inside the transaction.
 
 `ImportBatch` rows are not in the document. A batch records an import run rather than training
 data, so restored puzzles simply carry no batch.

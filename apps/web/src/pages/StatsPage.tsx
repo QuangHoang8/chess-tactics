@@ -16,19 +16,30 @@ export function StatsPage() {
   const [groupBy, setGroupBy] = useState<GroupBy>("theme");
 
   useEffect(() => {
+    // Switching the grouping refires this, so a slow earlier response must not land on top of a
+    // fast later one and leave the table disagreeing with the select.
+    let cancelled = false;
     setStatus("loading");
+
     getStats({ groupBy })
       .then((result) => {
-        if (!result) {
+        if (cancelled || !result) {
           return;
         }
         setStats(result);
         setStatus("ready");
       })
       .catch((error: unknown) => {
+        if (cancelled) {
+          return;
+        }
         setErrorMessage(error instanceof ApiError ? error.message : "Failed to load stats");
         setStatus("error");
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, [groupBy]);
 
   if (status === "error") {
