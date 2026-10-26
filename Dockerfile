@@ -9,8 +9,15 @@
 # output (node_modules/.prisma/client) is a generated artifact, not a lockfile dependency, so
 # `pnpm deploy`'s from-the-lockfile reinstall would not carry it into the deployed folder without
 # an explicit Prisma `generator` `output` path (schema.prisma doesn't set one). Copying the whole
-# pruned repo instead reuses the exact module-resolution layout already verified by local
-# `pnpm --filter @chess-tactics/api start:dev`, at the cost of also shipping apps/web's prod deps.
+# repo instead reuses the exact module-resolution layout already verified by local
+# `pnpm --filter @chess-tactics/api start:dev`, at the cost of also shipping apps/web's prod deps
+# AND every workspace's devDependencies (no `pnpm prune --prod` -- see below).
+#
+# Deliberately NOT running `pnpm prune --prod`: it interactively prompts ("The modules directories
+# will be removed and reinstalled from scratch. Proceed?") the first time it runs in this repo's
+# pnpm store layout, confirmed locally -- a `RUN` step with no stdin would hit that prompt with EOF
+# and most likely no-op or hang rather than actually pruning. A bigger image that is known to build
+# beats a smaller one that might not. Revisit only with a real Docker engine to iterate against.
 #
 # UNVERIFIED: no Docker engine is available on the machine that wrote this file (see
 # docs/deployment.md "Local development"). Render's own build is the first real test — if it fails,
@@ -43,11 +50,11 @@ COPY . .
 # syntactically valid placeholder is enough (mirrors .github/workflows/ci.yml). The real
 # DATABASE_URL is supplied by Render as a runtime env var, for `prisma migrate deploy` and the app.
 ENV DATABASE_URL="postgresql://user:password@localhost:5432/db?schema=public"
-RUN pnpm build
-RUN pnpm prune --prod
-# Generated last, after the prod prune: node_modules/.prisma/client is a generated artifact, not a
-# lockfile entry, so pruning first and generating after guarantees the prune can't sweep it away.
+# Generate BEFORE build, not after: `nest build` (plain tsc) type-checks against the generated
+# Prisma Client's types (e.g. `$transaction(async (tx) => ...)`'s `tx` parameter has no inferrable
+# type without them) -- building first produced 39 implicit-`any` errors on the first real attempt.
 RUN pnpm db:generate
+RUN pnpm build
 
 FROM node:22-bookworm-slim AS runtime
 # openssl is a documented Prisma engine runtime requirement on Debian-based images.
