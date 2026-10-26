@@ -1,0 +1,37 @@
+# Render Blueprint for apps/api (plan docs/implementation-plan.md §6.2).
+#
+# This only declares the service shape. First deploy still needs manual, one-time steps in the
+# Render dashboard that a blueprint cannot do safely or at all:
+#   1. New > Blueprint > point at this repo (Render reads this file and proposes the service below).
+#   2. Fill in every `sync: false` env var's real value in the dashboard. Render blueprints
+#      deliberately never store secret values in the repo -- `sync: false` just reserves the key
+#      and makes Render prompt for it once.
+#   3. DATABASE_URL must be the Neon pooled connection string (plan §6.1), created first.
+#   4. CORS_ORIGIN must be the Cloudflare Pages URL from §6.3 -- update it once that URL is known
+#      (Pages' default *.pages.dev URL exists before any custom domain is attached).
+#
+# `pnpm db:seed` (bootstrapping the one owner account) is a one-off script, not part of the running
+# service -- run it locally (or from CI) with DATABASE_URL pointed at Neon, same as Phase 1. It is
+# intentionally not wired into this blueprint or the Dockerfile's CMD.
+
+services:
+  - type: web
+    name: chess-tactics-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    region: singapore # closest Render region to the Neon ap-southeast-1 project (see docs/deployment.md)
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false

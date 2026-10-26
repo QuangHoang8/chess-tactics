@@ -6,7 +6,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "dev": "vite",
     "build": "vite build",
-    "test": "vitest run"
+    "test": "vitest run",
+    "deploy": "pnpm build && wrangler pages deploy"
   },
   "dependencies": {
     "@chess-tactics/contracts": "workspace:*",
@@ -23,6 +24,7 @@
     "jsdom": "^25.0.1",
     "typescript": "^5.7.3",
     "vite": "^6.0.7",
-    "vitest": "^3.0.5"
+    "vitest": "^3.0.5",
+    "wrangler": "^4.0.0"
   }
 }

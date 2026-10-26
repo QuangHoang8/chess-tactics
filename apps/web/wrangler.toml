@@ -1,0 +1,18 @@
+# Cloudflare Pages deploy config (plan docs/implementation-plan.md §6.3).
+# `pnpm --filter @chess-tactics/web deploy` builds then runs `wrangler pages deploy`, which reads
+# this file for the project name and build output directory -- no extra flags needed.
+#
+# First-ever deploy still requires one manual step: `wrangler login` (or set CLOUDFLARE_API_TOKEN /
+# CLOUDFLARE_ACCOUNT_ID env vars for non-interactive/CI use) so wrangler is authorized against your
+# Cloudflare account. Interactively, `wrangler pages deploy` offers to create the "chess-tactics-web"
+# Pages project on first run if it doesn't exist yet -- UNVERIFIED whether a non-interactive/CI run
+# does the same or errors "project not found" instead (no Cloudflare account was available to test
+# this against). If it errors, create the project once via `wrangler pages project create
+# chess-tactics-web` (or the dashboard) before the first scripted deploy.
+name = "chess-tactics-web"
+pages_build_output_dir = "dist"
+
+# No [vars] block: this is a pure static SPA (no Pages Functions), and `[vars]` only injects into
+# Functions at request time anyway. apps/web/src/api/client.ts reads VITE_API_URL at BUILD time via
+# Vite, so it must be exported as a shell env var before `pnpm build` runs, e.g.:
+#   VITE_API_URL=https://chess-tactics-api.onrender.com/api pnpm --filter @chess-tactics/web deploy

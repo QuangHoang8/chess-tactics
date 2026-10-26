@@ -1,0 +1,14 @@
+**/node_modules
+**/dist
+**/build
+**/*.tsbuildinfo
+.git
+.env
+.env.*
+!.env.example
+**/coverage
+**/.vitest-cache
+.archon
+.agents
+.claude
+apps/web/node_modules

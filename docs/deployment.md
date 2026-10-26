@@ -5,6 +5,34 @@ lockdown) ship in Phase 6 (see `docs/implementation-plan.md` §5). This document
 onward because the hosting decision itself constrains the data layer from day one (see below) — it
 cannot be deferred to Phase 6 without risking a late rewrite.
 
+## Phase 6 artifacts (prepared ahead of time, not yet run)
+
+The following files exist so Phase 6 is "fill in dashboard secrets and run," not "write deploy
+config from scratch." None of them have been exercised against a real Render/Cloudflare account —
+**no Docker engine is available on the machine that wrote them**, so the Dockerfile in particular is
+unverified until Render's own build runs it. Treat the first real deploy as the actual test.
+
+| File | Purpose |
+|---|---|
+| `Dockerfile` | Multi-stage build for `apps/api`; runs `prisma migrate deploy` then the app on container start (see in-file comments for why `pnpm deploy`'s package-pruning approach was rejected). |
+| `.dockerignore` | Keeps `.env`, `node_modules`, and build output out of the Docker build context. |
+| `render.yaml` | Render Blueprint declaring the `chess-tactics-api` web service (Docker runtime, `region: singapore` to sit near the Neon `ap-southeast-1` project, health check at `/api/health`). Secrets are `sync: false` — Render prompts for them once in the dashboard; they are never in the repo. |
+| `apps/web/wrangler.toml` + `apps/web`'s new `deploy` script | `pnpm --filter @chess-tactics/web deploy` builds and runs `wrangler pages deploy`, which creates/updates the `chess-tactics-web` Cloudflare Pages project. First use needs `wrangler login` (or `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID` for non-interactive use). |
+
+**One real code change made to enable this:** `prisma` moved from `devDependencies` to
+`dependencies` in the root `package.json` (and `pnpm-lock.yaml` regenerated to match) — the
+Dockerfile's `pnpm prune --prod` step would otherwise strip the `prisma` CLI before `prisma migrate
+deploy` needs it at container start.
+
+**Still manual when Phase 6 actually runs** (see §6.1–6.3 of the plan): creating the Neon project
+and the Render Blueprint itself (Render reads `render.yaml` once you point a Blueprint at this
+repo), typing the real secret values into the Render dashboard, and the Cloudflare account
+login/authorization for `wrangler`. `VITE_API_URL` must be exported as a shell env var *before*
+`pnpm deploy` runs (Vite inlines it at build time — see the comment in `wrangler.toml`), and
+`CORS_ORIGIN` on the Render side can only be set correctly *after* the first Pages deploy reveals
+the `*.pages.dev` URL — expect to deploy the API once, deploy the frontend, then redeploy the API
+with the real `CORS_ORIGIN`.
+
 ## Hosting decision (plan §3.6)
 
 - **API**: Render free web service (long-lived Node process).
