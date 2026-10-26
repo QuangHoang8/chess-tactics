@@ -5,24 +5,32 @@ lockdown) ship in Phase 6 (see `docs/implementation-plan.md` §5). This document
 onward because the hosting decision itself constrains the data layer from day one (see below) — it
 cannot be deferred to Phase 6 without risking a late rewrite.
 
-## Phase 6 artifacts (prepared ahead of time, not yet run)
+## Phase 6 artifacts (prepared ahead of time)
 
 The following files exist so Phase 6 is "fill in dashboard secrets and run," not "write deploy
-config from scratch." None of them have been exercised against a real Render/Cloudflare account —
-**no Docker engine is available on the machine that wrote them**, so the Dockerfile in particular is
-unverified until Render's own build runs it. Treat the first real deploy as the actual test.
+config from scratch." **No Docker engine is available on the machine that wrote them**, so every
+fix below came from reading real Render build/boot logs across several deploy attempts, not from
+local Docker testing. As of the latest commit: the Docker build succeeds, and boot has been
+verified as far as Prisma's query engine loading (a `debian-openssl-1.1.x` vs `3.0.x` mismatch was
+caught and fixed there) — the fix for that specific failure has not yet been pushed/redeployed, so
+a clean `Nest application successfully started` + a 200 on `/api/health` is still unconfirmed.
 
 | File | Purpose |
 |---|---|
-| `Dockerfile` | Multi-stage build for `apps/api`; runs `prisma migrate deploy` then the app on container start (see in-file comments for why `pnpm deploy`'s package-pruning approach was rejected). |
+| `Dockerfile` | Multi-stage build for `apps/api`; runs `prisma migrate deploy` then the app on container start (see in-file comments for why `pnpm deploy`'s package-pruning approach, and `pnpm prune --prod`, were both rejected). |
 | `.dockerignore` | Keeps `.env`, `node_modules`, and build output out of the Docker build context. |
 | `render.yaml` | Render Blueprint declaring the `chess-tactics-api` web service (Docker runtime, `region: singapore` to sit near the Neon `ap-southeast-1` project, health check at `/api/health`). Secrets are `sync: false` — Render prompts for them once in the dashboard; they are never in the repo. |
 | `apps/web/wrangler.toml` + `apps/web`'s new `deploy` script | `pnpm --filter @chess-tactics/web deploy` builds and runs `wrangler pages deploy`, which creates/updates the `chess-tactics-web` Cloudflare Pages project. First use needs `wrangler login` (or `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID` for non-interactive use). |
 
-**One real code change made to enable this:** `prisma` moved from `devDependencies` to
-`dependencies` in the root `package.json` (and `pnpm-lock.yaml` regenerated to match) — the
-Dockerfile's `pnpm prune --prod` step would otherwise strip the `prisma` CLI before `prisma migrate
-deploy` needs it at container start.
+**Real code changes made to enable this (not just config/docs):**
+- `prisma` moved from `devDependencies` to `dependencies` in the root `package.json` — the
+  Dockerfile needs the CLI available at container start for `prisma migrate deploy`.
+- `packageManager: "pnpm@9.15.9"` pinned in the root `package.json` — an unpinned `corepack enable`
+  let the Docker build resolve pnpm >=10, which blocks every dependency's install/postinstall
+  script by default (`ERR_PNPM_IGNORED_BUILDS`) and broke the first real Render build.
+- `binaryTargets = ["native", "debian-openssl-3.0.x"]` pinned in `prisma/schema.prisma` — the
+  Docker build stage generated the Prisma Client before OpenSSL detection could resolve correctly,
+  baking in the wrong query-engine binary and crashing the container at boot (`PrismaService.onModuleInit`).
 
 **Still manual when Phase 6 actually runs** (see §6.1–6.3 of the plan): creating the Neon project
 and the Render Blueprint itself (Render reads `render.yaml` once you point a Blueprint at this
