@@ -5,6 +5,7 @@
   "engines": {
     "node": ">=22"
   },
+  "packageManager": "pnpm@9.15.9",
   "scripts": {
     "build": "pnpm -r --if-present run build",
     "typecheck": "pnpm build && pnpm -r --if-present run typecheck && pnpm exec tsc --noEmit -p prisma/tsconfig.json",

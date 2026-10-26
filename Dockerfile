@@ -19,8 +19,14 @@
 # the `*-gnu` native binary) specifically to avoid (b); switching to an `-alpine` base would require
 # confirming a `*-musl` build of `@node-rs/argon2` exists first.
 
+# Pinned to the exact pnpm version this repo was last verified against (matches `packageManager`
+# in package.json and .github/workflows/ci.yml's `pnpm/action-setup@v4 version: 9`). Without an
+# explicit pin, `corepack enable` lets pnpm resolve to whatever is newest, and pnpm >=10 blocks
+# every dependency's install/postinstall script by default (ERR_PNPM_IGNORED_BUILDS) unless
+# allow-listed -- which broke the first real Render build (prisma/esbuild/workerd all need their
+# postinstall to fetch platform binaries). 9.15.9 predates that default and needs no allow-list.
 FROM node:22-bookworm-slim AS build
-RUN corepack enable
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 WORKDIR /repo
 
 # Copy manifests first so `pnpm install` is cached unless a dependency actually changed.
