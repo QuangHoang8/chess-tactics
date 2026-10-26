@@ -7,7 +7,14 @@
 // that starts in Phase 1 (plan §5).
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // "native" covers local dev (Windows/whatever runs `prisma generate` by hand).
+  // "debian-openssl-3.0.x" is pinned explicitly for Render's Docker build (plan §6.2): the build
+  // stage's `prisma generate` runs before `apt-get install openssl`, so "native" detection there
+  // falls back to the wrong default (debian-openssl-1.1.x) instead of Bookworm's actual OpenSSL 3.0 --
+  // confirmed by a real Render boot failure ("Prisma Client could not locate the Query Engine").
+  // Pinning the target explicitly makes generate correct regardless of what detection concludes.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {

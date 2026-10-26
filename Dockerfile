@@ -33,6 +33,15 @@
 # allow-listed -- which broke the first real Render build (prisma/esbuild/workerd all need their
 # postinstall to fetch platform binaries). 9.15.9 predates that default and needs no allow-list.
 FROM node:22-bookworm-slim AS build
+# openssl here too, not just in the runtime stage: `prisma generate`'s "native" platform detection
+# reads the system's actual OpenSSL via this package. Without it, detection silently fell back to
+# the wrong default (debian-openssl-1.1.x) instead of Bookworm's real 3.0.x, generating a client
+# that didn't match any engine the runtime stage could find -- confirmed by a real Render boot
+# failure. `binaryTargets` in prisma/schema.prisma now pins the correct target explicitly too, so
+# this is belt-and-suspenders rather than the only fix.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssl \
+    && rm -rf /var/lib/apt/lists/*
 RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 WORKDIR /repo
 
