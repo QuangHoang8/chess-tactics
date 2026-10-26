@@ -64,7 +64,11 @@ RUN apt-get update \
 ENV NODE_ENV=production
 WORKDIR /repo
 
-RUN groupadd --system app && useradd --system --gid app app
+# --create-home: Prisma's CLI/query engine cache to a $HOME-derived path; a homeless --system user
+# (no -m) leaves $HOME unset/pointing at `/`, which can fail at boot with a permission/ENOENT error
+# that only shows up once the container actually starts, not during the build.
+RUN groupadd --system app && useradd --system --create-home --home-dir /home/app --gid app app
+ENV HOME=/home/app
 COPY --from=build --chown=app:app /repo /repo
 USER app
 
@@ -76,8 +80,10 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
 # step -- the free plan has no pre-deploy/release-phase hook (plan §6.1). Safe to repeat: applying
 # an already-applied migration is a no-op.
 #
-# Calling the `prisma` bin directly (not `pnpm exec`/`npx`): this runtime stage never runs
-# `corepack enable`, so there is no `pnpm` on PATH here, and the `app` user (no home dir) can't do
-# corepack's first-use package-manager fetch anyway. `prisma` is a root prod dependency, so its bin
-# link lives at the repo root's node_modules/.bin regardless of which workspace package needs it.
-CMD ["sh", "-c", "./node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma && node apps/api/dist/main.js"]
+# Invoking prisma's JS entry directly with `node`, not the `node_modules/.bin/prisma` shim: this
+# runtime stage never runs `corepack enable`, so there is no `pnpm` on PATH to run `pnpm exec`/`npx`
+# with, and a `.bin` shim's executable bit / relative-path assumptions are one more thing that could
+# silently differ from the Windows shim this was authored next to. `node_modules/prisma/package.json`
+# names `build/index.js` as its `bin` entry (confirmed locally) -- calling it with `node` sidesteps
+# the shim question entirely.
+CMD ["sh", "-c", "node node_modules/prisma/build/index.js migrate deploy --schema prisma/schema.prisma && node apps/api/dist/main.js"]
